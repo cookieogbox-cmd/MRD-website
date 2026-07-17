@@ -57,5 +57,32 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    
+    <script>
+  // Block and remove any runtime Hercules badges or frames
+  const clearBadge = () => {
+    document.querySelectorAll('a[href*="hercules.app"]').forEach(el => {
+      // Delete the link and its surrounding layout box container
+      const container = el.closest('div') || el.parentElement || el;
+      container.remove();
+    });
+    
+    // Scan for any raw text blocks containing the brand name
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.nodeValue.includes("Hercules") || node.nodeValue.includes("Built with")) {
+        node.parentElement.remove();
+      }
+    }
+  };
+
+  // Run the check instantly, when fully loaded, and continuously for 3 seconds
+  clearBadge();
+  window.addEventListener('DOMContentLoaded', clearBadge);
+  window.addEventListener('load', clearBadge);
+  const badgeInterval = setInterval(clearBadge, 100);
+  setTimeout(() => clearInterval(badgeInterval), 3000);
+</script>
   </body>
 </html>
