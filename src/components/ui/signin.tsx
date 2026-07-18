@@ -1,8 +1,8 @@
-import { forwardRef, useCallback, useEffect } from "react";
+import { forwardRef, useCallback, useEffect, useState } from "react";
 import { type VariantProps } from "class-variance-authority";
 import { Loader2, LogIn, LogOut } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "@usehercules/auth/react";
+import { useAuth, useClerk } from "@clerk/clerk-react";
 import { Button, buttonVariants } from "@/components/ui/button.tsx";
 
 export interface SignInButtonProps
@@ -61,51 +61,54 @@ export const SignInButton = forwardRef<HTMLButtonElement, SignInButtonProps>(
     },
     ref,
   ) => {
-    const { isAuthenticated, signin, signout, isLoading, error } = useAuth();
+    const { isLoaded, isSignedIn, signOut, error } = useAuth();
+    const { openSignIn } = useClerk();
+    const [processing, setProcessing] = useState(false);
 
     useEffect(() => {
       if (error) {
-        toast.error("Login error", {
+        toast.error("Authentication error", {
           description: error.message,
         });
-        console.error("Login error", error);
+        console.error("Authentication error", error);
       }
     }, [error]);
 
     const handleClick = useCallback(
       async (event: React.MouseEvent<HTMLButtonElement>) => {
-        // Run custom onClick first
         onClick?.(event);
+        setProcessing(true);
 
         try {
-          if (isAuthenticated) {
-            await signout();
+          if (isSignedIn) {
+            await signOut();
           } else {
-            await signin();
+            await openSignIn?.();
           }
         } catch (err) {
           console.error("Authentication error:", err);
-          // Don't prevent the default here as the auth library handles errors
+        } finally {
+          setProcessing(false);
         }
       },
-      [isAuthenticated, signout, signin, onClick],
+      [isSignedIn, openSignIn, onClick, signOut],
     );
 
-    const isDisabled = disabled || isLoading;
-    const defaultLoadingText = isAuthenticated
+    const isDisabled = disabled || !isLoaded || processing;
+    const defaultLoadingText = isSignedIn
       ? "Signing Out..."
       : "Signing In...";
     const currentLoadingText = loadingText || defaultLoadingText;
 
-    const buttonText = isLoading
+    const buttonText = !isLoaded || processing
       ? currentLoadingText
-      : isAuthenticated
+      : isSignedIn
         ? signOutText
         : signInText;
 
-    const icon = isLoading ? (
+    const icon = !isLoaded || processing ? (
       <Loader2 className="size-4 animate-spin" />
-    ) : isAuthenticated ? (
+    ) : isSignedIn ? (
       <LogOut className="size-4" />
     ) : (
       <LogIn className="size-4" />
@@ -121,7 +124,7 @@ export const SignInButton = forwardRef<HTMLButtonElement, SignInButtonProps>(
         className={className}
         asChild={asChild}
         aria-label={
-          isAuthenticated
+          isSignedIn
             ? "Sign out of your account"
             : "Sign in to your account"
         }

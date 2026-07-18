@@ -4,15 +4,15 @@ import { api } from "@/convex/_generated/api.js";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Clock, Globe, ScrollText, BookOpen, ChevronRight, Feather,
-  Lock, Search, SlidersHorizontal, X, ChevronDown,
+  Lock, Search, SlidersHorizontal, X, ChevronDown, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Input } from "@/components/ui/input.tsx";
-import { Link, useSearchParams } from "react-router-dom";
-import { Authenticated } from "convex/react";
-import { EpisodeUnlockBadge } from "@/components/unlock-gate.tsx";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useAuth, useClerk } from "@clerk/clerk-react";
 import { LikeButton, ReaderCount } from "@/components/like-button.tsx";
+import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type EpisodeStatus = "free" | "coming" | "locked";
@@ -45,7 +45,7 @@ const EPISODES: Episode[] = [
     subtitle: "Scar-heart Malka Raurah · Episode 1",
     synopsis:
       "The world remembers everything — except what happened to Malka. In a city where memory is currency and scars speak louder than words, one girl begins to unravel what was taken from her.",
-    cover: "https://hercules-cdn.com/file_zwKoMroNRzrAPhnO04OOvFqt",
+    cover: "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=800&q=80",
     status: "free",
     minutes: 44,
     tags: ["Magic", "Memory", "Origin"],
@@ -59,7 +59,7 @@ const EPISODES: Episode[] = [
     subtitle: "Scar-heart Malka Raurah · Episode 2",
     synopsis:
       "The world remembers everything — except what happened to Malka. In a city where memory is currency and scars speak louder than words, one girl begins to unravel what was taken from her.",
-    cover: "https://hercules-cdn.com/file_Pjj1jCqzVtK2EmJFhyuBbOP0",
+    cover: "https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?auto=format&fit=crop&w=800&q=80",
     status: "free",
     minutes: 44,
     tags: ["Magic", "Memory", "Origin"],
@@ -73,7 +73,7 @@ const EPISODES: Episode[] = [
     subtitle: "Scar-heart Malka Raurah · Episode 3",
     synopsis:
       "Beyond the city walls stands a gate no one has passed in a century. Malka has a key she doesn't remember acquiring — and something ancient is already waiting on the other side.",
-    cover: "https://hercules-cdn.com/file_dsbSxaNfIx3OB5B7MWMKLiir",
+    cover: "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=800&q=80",
     status: "coming",
     minutes: 44,
     tags: ["Magic", "Mystery", "Threshold"],
@@ -87,7 +87,7 @@ const EPISODES: Episode[] = [
     subtitle: "Scar-heart Malka Raurah · Episode 4",
     synopsis:
       "The memory-keepers have declared war on the scarred. Malka must choose: vanish into safety or ignite the rebellion the city has been holding its breath for.",
-    cover: "https://hercules-cdn.com/file_hImXFPvfKor1NUph1wJ7x1vM",
+    cover: "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?auto=format&fit=crop&w=800&q=80",
     status: "coming",
     minutes: 44,
     tags: ["Rebellion", "War", "Choice"],
@@ -138,20 +138,10 @@ export default function EpisodesPage() {
     setChapterFilter(ch);
   }, [searchParams]);
 
-  const dbChapters = useQuery(api.chapters.list, {});
-  void dbChapters; // used only for homepage book cards, not episode list
-
   const dbEpisodes = useQuery(api.episodes.list, {});
-  const seedEpisodes = useMutation(api.episodes.seedDefaults);
-  const ensureFoundation = useMutation(api.migrations.ensureFoundation);
-
-  useEffect(() => {
-    // Seed default episodes, then backfill bookId via the foundation migration.
-    seedEpisodes()
-      .then(() => ensureFoundation())
-      .catch(() => {/* ignore if already seeded/migrated */});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const balance = useQuery(api.tokens.getMyBalance, {});
+  const { isLoaded, isSignedIn } = useAuth();
+  const clerk = useClerk();
 
   // Use DB episodes if loaded, otherwise fall back to static list
   const episodes: Episode[] = (dbEpisodes && dbEpisodes.length > 0)
@@ -445,7 +435,13 @@ export default function EpisodesPage() {
             animate="show"
             key={`${selectedArc}-${selectedStatus}-${selectedTags.join()}-${sort}`}>
             {filtered.map((ep) => (
-              <EpisodeCard key={ep.number} episode={ep} />
+              <EpisodeCard
+                key={ep.number}
+                episode={ep}
+                balance={balance}
+                isSignedIn={isSignedIn}
+                authLoaded={isLoaded}
+              />
             ))}
           </motion.div>
         )}
@@ -480,9 +476,79 @@ export default function EpisodesPage() {
 }
 
 // ── Episode Card ─────────────────────────────────────────────────────────────
-function EpisodeCard({ episode }: { episode: Episode }) {
+function EpisodeCard({
+  episode,
+  balance,
+  isSignedIn,
+  authLoaded,
+}: {
+  episode: Episode;
+  balance?: number;
+  isSignedIn: boolean;
+  authLoaded: boolean;
+}) {
   const isLocked = episode.status === "locked";
   const isComing = episode.status === "coming";
+  const navigate = useNavigate();
+  const { openSignIn } = useClerk();
+  const [unlocking, setUnlocking] = useState(false);
+  const unlockStatus = useQuery(api.tokens.checkUnlock, { episodeNumber: episode.number });
+  const unlockMutation = useMutation(api.tokens.unlockEpisode);
+
+  const hasActiveUnlock = !!unlockStatus && !unlockStatus.expired;
+  const tokenCost = episode.tokenPrice ?? episode.price ?? 0;
+  const currentBalance = balance ?? 0;
+  const canAfford = tokenCost > 0 ? currentBalance >= tokenCost : currentBalance > 0;
+
+  const handleReadClick = async () => {
+    if (isComing) return;
+
+    if (episode.status === "free") {
+      navigate(`/read/${episode.number}`);
+      return;
+    }
+
+    if (!authLoaded || !isSignedIn) {
+      clerk?.openSignIn?.();
+      return;
+    }
+
+    if (hasActiveUnlock) {
+      navigate(`/read/${episode.number}`);
+      return;
+    }
+
+    if (currentBalance <= 0) {
+      toast.error("You need tokens to unlock this episode. Visit the token store to buy more.");
+      return;
+    }
+
+    if (!canAfford) {
+      toast.error(`You need ${tokenCost - currentBalance} more token(s) to unlock this episode.`);
+      return;
+    }
+
+    setUnlocking(true);
+    try {
+      await unlockMutation({ episodeNumber: episode.number });
+      toast.success("Episode unlocked. Redirecting to read mode.");
+      navigate(`/read/${episode.number}`);
+    } catch (error) {
+      console.error(error);
+      toast.error("Unable to unlock this episode right now. Please try again.");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleButtonLabel = () => {
+    if (isComing) return "Coming Soon";
+    if (episode.status === "free") return "Read Now";
+    if (hasActiveUnlock) return "Continue Reading";
+    if (!authLoaded || !isSignedIn) return "Sign In to Unlock";
+    if (unlocking) return "Unlocking...";
+    return tokenCost > 0 ? `Unlock — ${tokenCost} tokens` : "Unlock Episode";
+  };
 
   return (
     <motion.div
@@ -507,7 +573,7 @@ function EpisodeCard({ episode }: { episode: Episode }) {
             style={{ fontFamily: "'Cinzel Decorative', serif" }}>
             {episode.number}
           </div>
-          <div className="absolute top-3 right-3">
+          <div className="absolute top-3 right-3 space-y-1">
             {episode.status === "free" && (
               <Badge className="bg-primary text-primary-foreground text-xs">Free</Badge>
             )}
@@ -522,7 +588,6 @@ function EpisodeCard({ episode }: { episode: Episode }) {
               </Badge>
             )}
           </div>
-          {/* Arc label */}
           <div className="absolute bottom-2 left-2 right-2">
             <span className="text-[10px] text-muted-foreground/70 tracking-wide"
               style={{ fontFamily: "'Cormorant Garamond', serif" }}>
@@ -589,27 +654,28 @@ function EpisodeCard({ episode }: { episode: Episode }) {
         </div>
 
         {/* CTA */}
-        {episode.status === "free" ? (
-          <Link to={`/read/${episode.number}`} className="w-full">
-            <Button size="sm" className="w-full cursor-pointer mt-1">
-              <BookOpen className="w-3.5 h-3.5 mr-1.5" /> Read Now
-            </Button>
-          </Link>
-        ) : isLocked ? (
-          <div className="w-full mt-1 space-y-2">
-            <Authenticated>
-              <EpisodeUnlockBadge episodeNumber={episode.number} />
-            </Authenticated>
-            <Link to={`/read/${episode.number}`} className="w-full block">
-              <Button size="sm" className="w-full cursor-pointer" variant="secondary">
-                <Lock className="w-3.5 h-3.5 mr-1.5" /> {episode.tokenPrice ? `Unlock — ${episode.tokenPrice} tokens` : episode.price ? `Unlock — ${episode.price} tokens` : "Unlock Episode"}
-              </Button>
-            </Link>
-          </div>
-        ) : (
-          <Button size="sm" className="w-full cursor-pointer mt-1" variant="secondary" disabled>
-            Coming Soon
-          </Button>
+        <Button
+          size="sm"
+          className="w-full mt-1"
+          variant={isLocked ? "secondary" : undefined}
+          onClick={handleReadClick}
+          disabled={isComing || unlocking}
+          type="button"
+        >
+          {isLocked ? <Lock className="w-3.5 h-3.5 mr-1.5" /> : <BookOpen className="w-3.5 h-3.5 mr-1.5" />}
+          {handleButtonLabel()}
+        </Button>
+
+        {isLocked && authLoaded && !isSignedIn && (
+          <span className="text-[11px] text-muted-foreground">Sign in to see your token balance and unlock this episode.</span>
+        )}
+        {isLocked && authLoaded && isSignedIn && !hasActiveUnlock && currentBalance > 0 && !canAfford && (
+          <span className="text-[11px] text-destructive">Not enough tokens to unlock this episode.</span>
+        )}
+        {isLocked && hasActiveUnlock && (
+          <span className="inline-flex items-center gap-1 text-[10px] bg-green-500/10 text-green-600 border border-green-500/20 rounded-full px-2 py-0.5">
+            <AlertTriangle className="w-3 h-3" /> Unlocked
+          </span>
         )}
       </div>
     </motion.div>

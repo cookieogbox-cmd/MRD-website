@@ -780,7 +780,10 @@ function EpisodePageManagerInner() {
 
 function AdminGuard() {
   const { user } = useAuth();
-  const email = user?.profile.email ?? "";
+  const email =
+    user?.primaryEmailAddress?.emailAddress ??
+    user?.emailAddresses?.[0]?.emailAddress ??
+    "";
   if (!ADMIN_EMAILS.includes(email)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-6">

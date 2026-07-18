@@ -102,7 +102,7 @@ export default function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { signout } = useAuth();
+  const { signOut } = useAuth();
 
   const isActive = (href: string) => {
     if (href.startsWith("/#")) return location.pathname === "/" && location.hash === href.slice(1);
@@ -216,7 +216,7 @@ export default function AppSidebar() {
         {/* Auth */}
         <Authenticated>
           <button
-            onClick={() => { signout(); setMobileOpen(false); }}
+            onClick={() => { signOut(); setMobileOpen(false); }}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl w-full text-sidebar-foreground/70 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground transition-all cursor-pointer border border-transparent`}
             title={collapsed ? "Sign out" : undefined}
           >

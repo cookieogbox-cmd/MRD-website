@@ -12,7 +12,9 @@
     "prettier-check": "prettier --check ."
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.9",
     "@hookform/resolvers": "^5.2.2",
+    "@neondatabase/serverless": "^1.1.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
@@ -62,6 +64,7 @@
     "react-router-dom": "^7.14.2",
     "recharts": "2.15.4",
     "sonner": "^2.0.7",
+    "stripe": "^22.3.2",
     "tailwind-merge": "^3.5.0",
     "use-debounce": "^10.1.1",
     "vaul": "^1.1.2",
